@@ -41,13 +41,18 @@ from custom_steps import (
     step_mobilenet_slr_floorplan,
 )
 
+USE_FIXED_FOLDING = False
+
+
 model_name = "mobilenetv1-w4a4"
 
 # which platforms to build the networks for
-zynq_platforms = ["ZCU102", "ZCU104"]
+zynq_platforms = ["ZCU104"]
 #alveo_platforms = ["U50", "U200", "U250", "U280"]
-alveo_platforms = ["U250"]
+alveo_platforms = []
 platforms_to_build = zynq_platforms + alveo_platforms
+
+
 
 
 # determine which shell flow to use for a given platform
@@ -75,16 +80,18 @@ def select_build_steps(platform):
             step_mobilenet_streamline,
             step_mobilenet_lower_convs,
             step_mobilenet_convert_to_hls_layers_separate_th,
-            "step_create_dataflow_partition",
-            "step_apply_folding_config",
+            "step_create_dataflow_partition"] \
+            + (["step_apply_folding_config"] if USE_FIXED_FOLDING else ["step_target_fps_parallelization"]) + \
+            [
             "step_generate_estimate_reports",
             "step_hls_codegen",
             "step_hls_ipgen",
             "step_set_fifo_depths",
             "step_create_stitched_ip",
+            "step_measure_rtlsim_performance",
             "step_synthesize_bitfile",
-            "step_make_pynq_driver",
-            "step_deployment_package",
+            #"step_make_pynq_driver",
+            #"step_deployment_package",
         ]
     elif platform in alveo_platforms:
         return [
@@ -124,8 +131,9 @@ for platform_name in platforms_to_build:
     os.makedirs(platform_dir, exist_ok=True)
 
     cfg = build_cfg.DataflowBuildConfig(
+        target_fps=470,
         steps=select_build_steps(platform_name),
-        output_dir="output_%s_%s" % (model_name, release_platform_name),
+        output_dir="output_%s_%s_%s" % (model_name, release_platform_name, "fixed" if USE_FIXED_FOLDING else "heuristic"),
         folding_config_file="folding_config/%s_folding_config.json" % platform_name,
         synth_clk_period_ns=select_clk_period(platform_name),
         board=platform_name,
@@ -137,7 +145,9 @@ for platform_name in platforms_to_build:
         vitis_opt_strategy=build_cfg.VitisOptStrategyCfg.PERFORMANCE_BEST,
         generate_outputs=[
             build_cfg.DataflowOutputType.PYNQ_DRIVER,
+            build_cfg.DataflowOutputType.STITCHED_IP,
             build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
+            build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE, # use PyVerilator to do a performance/latency test of the `STITCHED_IP` design
             build_cfg.DataflowOutputType.BITFILE,
             build_cfg.DataflowOutputType.DEPLOYMENT_PACKAGE,
         ],
